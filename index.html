@@ -85,7 +85,7 @@
   <div id="goalLabel"></div>
   <div id="boardWrap">
     <canvas id="board"></canvas>
-    <div id="overlay"><h2 id="ovTitle"></h2><p id="ovText"></p><button class="primary" id="ovBtn"></button></div>
+    <div id="overlay"><h2 id="ovTitle"></h2><p id="ovText"></p><button class="primary" id="ovBtn"></button><button id="shareBtn" style="display:none"></button></div>
   </div>
   <div id="buttons">
     <button id="hintBtn">💡 Hint</button>
@@ -600,6 +600,7 @@ async function reshuffle() {
 }
 
 function showOverlay(title, text, btn, fn) {
+  $('shareBtn').style.display = 'none';
   $('ovTitle').textContent = title; $('ovText').innerHTML = text; $('ovBtn').textContent = btn;
   $('ovBtn').onclick = () => { overlay.classList.remove('show'); fn(); };
   overlay.classList.add('show');
@@ -619,6 +620,33 @@ async function levelComplete() {
     'Next Level', () => { level = next; startLevel(true); });
 }
 
+function shareText() {
+  const hosted = /^https?:$/.test(location.protocol);
+  const url = hosted ? location.href.split(/[?#]/)[0] : '';
+  const mode = timerMode ? `⏱ Timer mode (${timeFor(level)}s level)` : `🎯 ${MOVES_PER_LEVEL} moves per level`;
+  const lines = [
+    "🎃 Kong's Cookie Match 🍪",
+    `I reached level ${level} with a total score of ${score.toLocaleString()}!`,
+    `Last level: ${levelScore.toLocaleString()} / ${targetFor(level).toLocaleString()} points · ${mode}`
+  ];
+  if (best > level) lines.push(`Best level so far: ${best}`);
+  lines.push('');
+  if (url) lines.push(`Think you can beat me? Play here: ${url}`);
+  lines.push('Catch Kong live: https://www.twitch.tv/kong');
+  return lines.join('\n');
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch (e) {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    const ok = document.execCommand('copy');
+    ta.remove(); return ok;
+  } catch (e) { return false; }
+}
+
 async function gameOver() {
   over = true; timerRunning = false;
   sfx.lose();
@@ -626,6 +654,14 @@ async function gameOver() {
   showOverlay(timerMode ? '⏰ Time\'s up!' : '👻 Out of moves!',
     `You reached level <b>${level}</b> with a total of <b>${score}</b> points.<br>This level: ${levelScore} / ${targetFor(level)}.`,
     'Try Again', () => { level = 1; score = 0; startLevel(false); });
+  const sb = $('shareBtn');
+  sb.textContent = '📋 Copy score to share with friends';
+  sb.style.display = '';
+  sb.onclick = async () => {
+    const ok = await copyText(shareText());
+    sb.textContent = ok ? '✅ Copied! Paste it anywhere' : '⚠️ Copy failed — select & copy manually';
+    setTimeout(() => { sb.textContent = '📋 Copy score to share with friends'; }, 2500);
+  };
 }
 
 async function startLevel(keepScore) {
