@@ -89,6 +89,7 @@
   </div>
   <div id="buttons">
     <button id="hintBtn">💡 Hint</button>
+    <button id="cbBtn">👁 Colorblind: Off</button>
     <button id="timerBtn">⏱ Timer: Off</button>
     <button id="soundBtn">🔊 Sound</button>
     <button id="restartBtn">↻ Restart</button>
@@ -140,9 +141,11 @@ let hint = null, lastActivity = performance.now();
 let effects = [];           // particles + popups
 let shake = 0;
 let soundOn = true;
+let patternsOn = false;     // colorblind mode: draw a distinct pattern on each tile type
 let timerMode = false, timeLeft = 0, timerRunning = false, lastTick = 0;
 
 try { best = +localStorage.getItem('cookieMatchBest') || 0; } catch (e) {}
+try { patternsOn = localStorage.getItem('cookieMatchPatterns') === '1'; } catch (e) {}
 try { timerMode = localStorage.getItem('cookieMatchTimer') === '1'; } catch (e) {}
 try { soundOn = localStorage.getItem('cookieMatchSound') !== '0'; } catch (e) {}
 
@@ -372,7 +375,7 @@ function drawTile(t, r, c, now) {
   glow.addColorStop(0, def.color + '40'); glow.addColorStop(1, def.color + '00');
   plateShape(h);
   ctx.fillStyle = glow; ctx.fill();
-  drawPattern(def.pattern, h, def.color);
+  if (patternsOn) drawPattern(def.pattern, h, def.color);
 
   // cookie, fit inside plate keeping aspect
   const img = images[t.type], box = cs * .84;
@@ -686,6 +689,11 @@ canvas.addEventListener('pointermove', e => {
 
 $('hintBtn').onclick = showHint;
 $('restartBtn').onclick = () => { if (overlay.classList.contains('show')) overlay.classList.remove('show'); level = 1; score = 0; startLevel(false); };
+function updateCbBtn() { $('cbBtn').textContent = patternsOn ? '👁 Colorblind: On' : '👁 Colorblind: Off'; }
+$('cbBtn').onclick = () => {
+  patternsOn = !patternsOn; updateCbBtn();
+  try { localStorage.setItem('cookieMatchPatterns', patternsOn ? '1' : '0'); } catch (e) {}
+};
 function updateTimerBtn() { $('timerBtn').textContent = timerMode ? '⏱ Timer: On' : '⏱ Timer: Off'; }
 $('timerBtn').onclick = () => {
   if (score > 0 && !over && !confirm('Switching modes restarts the game. Continue?')) return;
@@ -722,7 +730,7 @@ window.addEventListener('resize', resize);
 
 // ---------- Boot ----------
 (async function init() {
-  updateSoundBtn(); updateTimerBtn();
+  updateSoundBtn(); updateTimerBtn(); updateCbBtn();
   const loaded = await Promise.all(COOKIE_SRC.map(loadImage));
   images = TYPE_DEFS.map(d => tint(loaded[d.img], d.hue, d.sat, d.bri, d.flip));
   grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
