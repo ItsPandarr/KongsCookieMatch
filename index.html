@@ -31,16 +31,25 @@
     letter-spacing: .5px; color: var(--accent);
     text-shadow: 0 0 18px rgba(255,159,67,.55), 0 2px 0 #5a2d00;
   }
-  #stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  #stats { display: grid; grid-template-columns: 1fr 1.9fr 1fr; align-items: stretch; gap: 8px; }
   .stat { background: var(--panel); border-radius: 12px; padding: 6px 8px; text-align: center; border: 1px solid rgba(255,255,255,.08); }
   .stat small { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); }
   .stat b { font-size: clamp(18px, 4.5vw, 24px); font-variant-numeric: tabular-nums; }
+  .stat.score { background: linear-gradient(180deg, #4a2a80, #2a1a4a); border-color: rgba(255,159,67,.55); box-shadow: 0 0 18px rgba(255,159,67,.25); padding: 4px 8px 6px; }
+  .stat.score small { color: var(--accent); }
+  .stat.score b { display: inline-block; font-size: clamp(32px, 9vw, 46px); line-height: 1.1; color: #ffd166; text-shadow: 0 0 14px rgba(255,159,67,.6), 0 2px 0 #5a2d00; }
+  .stat.score b.bump { animation: bump .3s ease; }
+  @keyframes bump { 40% { transform: scale(1.18); } }
   #goal { height: 10px; border-radius: 6px; background: #120a23; overflow: hidden; border: 1px solid rgba(255,255,255,.08); }
   #goalBar { height: 100%; width: 0; background: linear-gradient(90deg, #ff9f43, #ffd166); transition: width .35s ease; }
-  #goalLabel { font-size: 12px; color: var(--muted); text-align: center; margin-top: -4px; }
+  #goalLabel { font-size: 12px; color: var(--muted); display: flex; justify-content: space-between; flex-wrap: wrap; gap: 2px 12px; margin-top: -4px; padding: 0 4px; }
+  #goalLabel b { color: var(--text); }
+  #goalLabel .total { font-size: 13px; }
+  #goalLabel .total b { color: #ffd166; font-size: 15px; }
   #boardWrap { position: relative; align-self: center; }
   canvas { display: block; border-radius: 16px; touch-action: none; box-shadow: 0 10px 40px rgba(0,0,0,.6), 0 0 0 2px rgba(255,159,67,.25); background: #150b28; }
-  #buttons { display: flex; gap: 8px; justify-content: center; }
+  #buttons { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+  .stat b.low { color: #ff6b81; }
   button {
     font: inherit; font-weight: 700; color: var(--text); background: var(--panel);
     border: 1px solid rgba(255,255,255,.15); border-radius: 12px; padding: 9px 16px; cursor: pointer;
@@ -69,8 +78,8 @@
   <h1>🎃 Kong's Cookie Match</h1>
   <div id="stats">
     <div class="stat"><small>Level</small><b id="level">1</b></div>
-    <div class="stat"><small>Score</small><b id="score">0</b></div>
-    <div class="stat"><small>Moves</small><b id="moves">0</b></div>
+    <div class="stat score"><small>Level Score</small><b id="score">0</b></div>
+    <div class="stat"><small id="movesLabel">Moves</small><b id="moves">0</b></div>
   </div>
   <div id="goal"><div id="goalBar"></div></div>
   <div id="goalLabel"></div>
@@ -80,6 +89,7 @@
   </div>
   <div id="buttons">
     <button id="hintBtn">💡 Hint</button>
+    <button id="timerBtn">⏱ Timer: Off</button>
     <button id="soundBtn">🔊 Sound</button>
     <button id="restartBtn">↻ Restart</button>
   </div>
@@ -111,6 +121,8 @@ const TYPES = TYPE_DEFS.length;
 const ROWS = 8, COLS = 8;
 const MOVES_PER_LEVEL = 25;
 const targetFor = lvl => 500 + (lvl - 1) * 300;
+// Timer mode: 30s on level 1, one second less per level, never below 15s
+const timeFor = lvl => Math.max(15, 31 - lvl);
 
 // ---------- DOM ----------
 const $ = id => document.getElementById(id);
@@ -121,15 +133,17 @@ const overlay = $('overlay');
 let images = [];            // one canvas/img per tile type
 let grid = [];              // grid[r][c] = tile | null
 let cs = 60, dpr = 1;       // cell size (css px), device pixel ratio
-let level = 1, score = 0, moves = MOVES_PER_LEVEL, best = 0;
+let level = 1, score = 0, levelScore = 0, moves = MOVES_PER_LEVEL, best = 0;
 let busy = true, over = false;
 let sel = null, drag = null;
 let hint = null, lastActivity = performance.now();
 let effects = [];           // particles + popups
 let shake = 0;
 let soundOn = true;
+let timerMode = false, timeLeft = 0, timerRunning = false, lastTick = 0;
 
 try { best = +localStorage.getItem('cookieMatchBest') || 0; } catch (e) {}
+try { timerMode = localStorage.getItem('cookieMatchTimer') === '1'; } catch (e) {}
 try { soundOn = localStorage.getItem('cookieMatchSound') !== '0'; } catch (e) {}
 
 // ---------- Helpers ----------
@@ -369,8 +383,25 @@ function drawTile(t, r, c, now) {
   ctx.restore();
 }
 
+function tick(now) {
+  const dt = Math.min(now - lastTick, 100);   // capped, so a hidden tab pauses the clock
+  lastTick = now;
+  if (!timerMode || !timerRunning) return;
+  const before = Math.ceil(timeLeft);
+  timeLeft = Math.max(0, timeLeft - dt / 1000);
+  if (Math.ceil(timeLeft) !== before) updateHUD();
+  if (timeLeft <= 0) { timerRunning = false; if (!busy) timeUpCheck(); }
+}
+
+async function timeUpCheck() {
+  if (!timerMode || over || timeLeft > 0) return;
+  busy = true; sel = null; drag = null;
+  await afterTurn();
+}
+
 function render() {
   const now = performance.now();
+  tick(now);
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -415,11 +446,25 @@ function render() {
 // ---------- Game flow ----------
 function updateHUD() {
   $('level').textContent = level;
-  $('score').textContent = score;
-  $('moves').textContent = moves;
+  const sc = $('score');
+  if (sc.textContent !== String(levelScore)) {
+    const grew = levelScore > (+sc.textContent || 0);
+    sc.textContent = levelScore;
+    if (grew) { sc.classList.remove('bump'); void sc.offsetWidth; sc.classList.add('bump'); }
+  }
+  if (timerMode) {
+    const t = Math.max(0, Math.ceil(timeLeft));
+    $('movesLabel').textContent = 'Time';
+    $('moves').textContent = t + 's';
+    $('moves').classList.toggle('low', t <= 5);
+  } else {
+    $('movesLabel').textContent = 'Moves';
+    $('moves').textContent = moves;
+    $('moves').classList.remove('low');
+  }
   const target = targetFor(level);
-  $('goalBar').style.width = Math.min(100, score / target * 100) + '%';
-  $('goalLabel').textContent = `Goal: ${target} points  ·  Best level: ${best || 1}`;
+  $('goalBar').style.width = Math.min(100, levelScore / target * 100) + '%';
+  $('goalLabel').innerHTML = `<span>Goal: <b>${target}</b>` + (timerMode ? ` · ${timeFor(level)}s per level` : '') + ` · Best level: ${best || 1}</span><span class="total">Total score: <b>${score}</b></span>`;
 }
 
 async function swapTiles(a, b, ms = 170) {
@@ -434,16 +479,19 @@ async function swapTiles(a, b, ms = 170) {
 }
 
 async function trySwap(a, b) {
-  if (busy || over) return;
+  if (busy || over || (timerMode && timeLeft <= 0)) return;
   busy = true; sel = null; hint = null; lastActivity = performance.now();
   sfx.swap();
   await swapTiles(a, b);
   if (findRuns().length === 0) {
     sfx.bad(); shake = 6;
     await swapTiles(a, b, 150);   // swap back
-    busy = false; return;
+    busy = false;
+    await timeUpCheck();
+    return;
   }
-  moves--; updateHUD();
+  if (!timerMode) moves--;
+  updateHUD();
   await resolveBoard();
   await afterTurn();
 }
@@ -464,7 +512,7 @@ async function resolveBoard() {
     const total = runs.reduce((n, r) => n + r.length, 0);
     if (total > cells.size) pts += 40;
     pts *= combo;
-    score += pts;
+    score += pts; levelScore += pts;
 
     // popups
     let sx = 0, sy = 0;
@@ -515,8 +563,8 @@ async function applyGravity() {
 async function afterTurn() {
   updateHUD();
   const target = targetFor(level);
-  if (score >= target) { await levelComplete(); return; }
-  if (moves <= 0) { await gameOver(); return; }
+  if (levelScore >= target) { await levelComplete(); return; }
+  if (timerMode ? timeLeft <= 0 : moves <= 0) { await gameOver(); return; }
   if (findMoves().length === 0) await reshuffle();
   lastActivity = performance.now();
   busy = false;
@@ -548,37 +596,33 @@ function showOverlay(title, text, btn, fn) {
 }
 
 async function levelComplete() {
-  over = true;
-  const bonus = moves * 20;
+  over = true; timerRunning = false;
+  const bonus = timerMode ? Math.ceil(Math.max(0, timeLeft)) * 10 : moves * 20;
   score += bonus; updateHUD();
-  // highest level whose goal the score already covers; play resumes on the one after it
-  const cleared = Math.max(level, Math.floor((score - 500) / 300) + 1);
-  const next = cleared + 1;
-  const skipped = next - level - 1;
+  const next = level + 1;
   best = Math.max(best, next);
   try { localStorage.setItem('cookieMatchBest', best); } catch (e) {}
   sfx.win();
   await sleep(500);
-  const skipText = skipped > 0
-    ? `<br>🚀 Huge score! You skip ${skipped === 1 ? 'level ' + (level + 1) : 'levels ' + (level + 1) + '–' + (next - 1)} and jump to <b>level ${next}</b>.`
-    : '';
   showOverlay('🎉 Level ' + level + ' Complete!',
-    `Score: <b>${score}</b>${bonus ? `<br>Leftover moves bonus: <b>+${bonus}</b>` : ''}${skipText}<br>Next goal: ${targetFor(next)} points`,
-    skipped > 0 ? 'Jump to Level ' + next : 'Next Level', () => { level = next; startLevel(true); });
+    `Level score: <b>${levelScore}</b> / ${targetFor(level)}${bonus ? `<br>${timerMode ? 'Time' : 'Leftover moves'} bonus: <b>+${bonus}</b>` : ''}<br>Total score: <b>${score}</b><br>Next goal: ${targetFor(next)} points`,
+    'Next Level', () => { level = next; startLevel(true); });
 }
 
 async function gameOver() {
-  over = true;
+  over = true; timerRunning = false;
   sfx.lose();
   await sleep(500);
-  showOverlay('👻 Out of moves!',
-    `You reached level <b>${level}</b> with <b>${score}</b> points.<br>The goal was ${targetFor(level)}.`,
+  showOverlay(timerMode ? '⏰ Time\'s up!' : '👻 Out of moves!',
+    `You reached level <b>${level}</b> with a total of <b>${score}</b> points.<br>This level: ${levelScore} / ${targetFor(level)}.`,
     'Try Again', () => { level = 1; score = 0; startLevel(false); });
 }
 
 async function startLevel(keepScore) {
   if (!keepScore) score = 0;
-  moves = MOVES_PER_LEVEL; over = false; busy = true; sel = null; hint = null; effects = [];
+  levelScore = 0;
+  moves = MOVES_PER_LEVEL; timeLeft = timeFor(level); timerRunning = false;
+  over = false; busy = true; sel = null; hint = null; effects = [];
   fillRandom();
   // drop-in intro animation
   const tiles = [];
@@ -594,7 +638,9 @@ async function startLevel(keepScore) {
   });
   tiles.forEach(a => { a.t.y = a.to; });
   lastActivity = performance.now();
+  lastTick = performance.now();
   busy = false;
+  timerRunning = timerMode;
 }
 
 function showHint() {
@@ -640,6 +686,13 @@ canvas.addEventListener('pointermove', e => {
 
 $('hintBtn').onclick = showHint;
 $('restartBtn').onclick = () => { if (overlay.classList.contains('show')) overlay.classList.remove('show'); level = 1; score = 0; startLevel(false); };
+function updateTimerBtn() { $('timerBtn').textContent = timerMode ? '⏱ Timer: On' : '⏱ Timer: Off'; }
+$('timerBtn').onclick = () => {
+  if (score > 0 && !over && !confirm('Switching modes restarts the game. Continue?')) return;
+  timerMode = !timerMode; updateTimerBtn();
+  try { localStorage.setItem('cookieMatchTimer', timerMode ? '1' : '0'); } catch (e) {}
+  overlay.classList.remove('show'); level = 1; score = 0; startLevel(false);
+};
 function updateSoundBtn() { $('soundBtn').textContent = soundOn ? '🔊 Sound' : '🔇 Muted'; }
 $('soundBtn').onclick = () => {
   soundOn = !soundOn; updateSoundBtn();
@@ -669,7 +722,7 @@ window.addEventListener('resize', resize);
 
 // ---------- Boot ----------
 (async function init() {
-  updateSoundBtn();
+  updateSoundBtn(); updateTimerBtn();
   const loaded = await Promise.all(COOKIE_SRC.map(loadImage));
   images = TYPE_DEFS.map(d => tint(loaded[d.img], d.hue, d.sat, d.bri, d.flip));
   grid = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
