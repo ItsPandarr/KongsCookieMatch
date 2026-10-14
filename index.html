@@ -549,15 +549,22 @@ function showOverlay(title, text, btn, fn) {
 
 async function levelComplete() {
   over = true;
-  best = Math.max(best, level + 1);
-  try { localStorage.setItem('cookieMatchBest', best); } catch (e) {}
-  sfx.win();
   const bonus = moves * 20;
   score += bonus; updateHUD();
+  // highest level whose goal the score already covers; play resumes on the one after it
+  const cleared = Math.max(level, Math.floor((score - 500) / 300) + 1);
+  const next = cleared + 1;
+  const skipped = next - level - 1;
+  best = Math.max(best, next);
+  try { localStorage.setItem('cookieMatchBest', best); } catch (e) {}
+  sfx.win();
   await sleep(500);
+  const skipText = skipped > 0
+    ? `<br>🚀 Huge score! You skip ${skipped === 1 ? 'level ' + (level + 1) : 'levels ' + (level + 1) + '–' + (next - 1)} and jump to <b>level ${next}</b>.`
+    : '';
   showOverlay('🎉 Level ' + level + ' Complete!',
-    `Score: <b>${score}</b>${bonus ? `<br>Leftover moves bonus: <b>+${bonus}</b>` : ''}<br>Next goal: ${targetFor(level + 1)} points`,
-    'Next Level', () => { level++; startLevel(true); });
+    `Score: <b>${score}</b>${bonus ? `<br>Leftover moves bonus: <b>+${bonus}</b>` : ''}${skipText}<br>Next goal: ${targetFor(next)} points`,
+    skipped > 0 ? 'Jump to Level ' + next : 'Next Level', () => { level = next; startLevel(true); });
 }
 
 async function gameOver() {
